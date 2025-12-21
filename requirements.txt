@@ -1,0 +1,9 @@
+sentence-transformers
+faiss-cpu
+numpy
+groq
+python-dotenv
+fastapi
+uvicorn
+torch
+streamlit
