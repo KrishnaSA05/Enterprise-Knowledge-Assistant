@@ -13,7 +13,7 @@ class Reranker:
         top_n: int = 3
     ) -> List[Dict]:
         pairs = [
-            (query, chunk["metadata"]["section"])
+            (query, chunk["metadata"]["text"])
             for chunk in retrieved_chunks
         ]
 

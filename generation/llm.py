@@ -23,10 +23,10 @@ class Generator:
         for chunk in chunks:
             section = chunk["metadata"].get("section", "Unknown")
             source = chunk["metadata"].get("source_file", "Unknown")
+            text = chunk["metadata"].get("text", "")
 
             block = (
-                f"[Source: {source} | Section: {section}]\n"
-                f"{chunk.get('text', '')}"
+                f"[Source: {source} | Section: {section}]\n{text}"
             )
             context_blocks.append(block)
 
