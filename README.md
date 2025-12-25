@@ -22,7 +22,8 @@ This project was built from scratch without LangChain to deeply understand every
 - 🤖 Low-latency LLM inference using Groq (LLaMA-3.1-8B)  
 - 📚 Source-grounded answers with citations  
 - ⚡ Persistent FAISS vector index for fast startup  
-- 🌐 FastAPI backend for serving queries  
+- 🌐 FastAPI backend for serving queries 
+- 🎨 Interactive Streamlit web UI for real-time question answering 
 - 📊 Quantitative evaluation using Precision@K and Recall@K  
 
 ---
@@ -37,7 +38,7 @@ FAISS Vector Search (Top-K)
    ↓
 Cross-Encoder Reranker (Top-N)
    ↓
-Groq LLaMA-3.1-8B
+LLM (Groq LLaMA-3.1-8B)
    ↓
 Answer + Source Citations
 ```
