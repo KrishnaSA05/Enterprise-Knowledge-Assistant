@@ -54,6 +54,6 @@ chain = (
 )
 
 # Query
-query = "What benefits does the company offer?"
+query = "In United states, who is the medical service insurance provider?"
 response = chain.invoke(query)
 print(response.content)
