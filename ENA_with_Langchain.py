@@ -19,7 +19,7 @@ docs = loader.load()
 splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
 chunks = splitter.split_documents(docs)
 
-# Embeddings
+# Embedding
 embeddings = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
