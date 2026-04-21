@@ -1,9 +1,23 @@
+# Embeddings & Reranking
 sentence-transformers
+
+# Vector Store
 faiss-cpu
+
+# Core
 numpy
+torch
+
+# LLM
 groq
 python-dotenv
+
+# Agentic Pipeline
+langgraph
+
+# API
 fastapi
 uvicorn
-torch
+
+# UI
 streamlit
