@@ -7,20 +7,16 @@ Phase 1 (unchanged):
   SYSTEM_PROMPT           — main RAG generation
   USER_PROMPT_TEMPLATE    — main RAG generation
 
-Phase 2 additions:
+Phase 2:
   ROUTER_SYSTEM_PROMPT           — classify query type
   ROUTER_USER_TEMPLATE           — classify query type
-
   RETRIEVAL_GRADER_SYSTEM_PROMPT — grade chunk relevance
   RETRIEVAL_GRADER_USER_TEMPLATE — grade chunk relevance
-
   QUERY_REWRITER_SYSTEM_PROMPT   — rewrite failed queries
   QUERY_REWRITER_USER_TEMPLATE   — rewrite failed queries
-
   ANSWER_GRADER_SYSTEM_PROMPT    — grade answer faithfulness
   ANSWER_GRADER_USER_TEMPLATE    — grade answer faithfulness
-
-  DIRECT_SYSTEM_PROMPT           — answer simple queries without retrieval
+  DIRECT_SYSTEM_PROMPT           — handle greetings only (NOT factual answers)
 """
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -49,26 +45,33 @@ Answer:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PHASE 2 — Router
-# Classifies the query so the graph can skip retrieval for simple queries.
+# PHASE 2 — Router (FIXED)
+#
+# BUG FIX: Previously classified general knowledge questions (e.g. "What is
+# Python?") as "direct", causing the system to answer them freely.
+#
+# Fix: Only "direct" for pure greetings/chitchat. ALL real questions — even
+# if unrelated to company docs — must go through RAG. The Generator's
+# SYSTEM_PROMPT will then correctly return "I don't know based on the
+# provided documents" when nothing relevant is found.
 # ══════════════════════════════════════════════════════════════════════════════
 
 ROUTER_SYSTEM_PROMPT = """
-You are a query classifier for an enterprise knowledge assistant.
+You are a query classifier for an enterprise knowledge assistant that ONLY
+answers questions about internal company documents, policies, and guidelines.
 
-Your job is to decide whether the user's query requires searching internal
-company documents, or whether it can be answered directly without retrieval.
+Classify as "retrieve" for ALL of the following:
+  - Any question about company policies, benefits, leave, travel, expenses
+  - Any question about employee guidelines, handbook, onboarding, culture
+  - Any factual or knowledge question (even if unrelated to the company)
+  - Anything that sounds like a real question expecting a factual answer
 
-Classify as "retrieve" if the query is about:
-  - Company policies, benefits, leave, travel, expenses
-  - Employee guidelines, handbook, onboarding, culture
-  - Operational procedures or internal processes
-  - Any topic likely found in enterprise documentation
+Classify as "direct" ONLY for:
+  - Pure greetings with no question ("hi", "hello", "hey", "good morning")
+  - Chitchat with no question ("thanks", "ok", "bye", "sounds good")
+  - Questions about what this assistant can do ("what can you help with?")
 
-Classify as "direct" if the query is:
-  - A greeting or chitchat ("hi", "thanks", "how are you")
-  - A general knowledge question unrelated to company docs
-  - A clarification about what the assistant can do
+When in doubt, ALWAYS classify as "retrieve".
 
 Respond with valid JSON only. No explanation. No markdown fences.
 Example: {"query_type": "retrieve"}
@@ -80,9 +83,7 @@ Query: {query}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PHASE 2 — Retrieval Grader
-# Grades a single retrieved chunk for relevance to the query.
-# Called per-chunk; the node aggregates results to make the final decision.
+# PHASE 2 — Retrieval Grader (unchanged)
 # ══════════════════════════════════════════════════════════════════════════════
 
 RETRIEVAL_GRADER_SYSTEM_PROMPT = """
@@ -106,9 +107,7 @@ Document chunk:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PHASE 2 — Query Rewriter
-# Rewrites a query that failed to retrieve relevant chunks.
-# Should produce a more specific, document-friendly version of the query.
+# PHASE 2 — Query Rewriter (unchanged)
 # ══════════════════════════════════════════════════════════════════════════════
 
 QUERY_REWRITER_SYSTEM_PROMPT = """
@@ -133,9 +132,7 @@ Rewritten query:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PHASE 2 — Answer Grader
-# Grades whether the generated answer is grounded in the retrieved sources.
-# Catches hallucinations before the answer reaches the user.
+# PHASE 2 — Answer Grader (unchanged)
 # ══════════════════════════════════════════════════════════════════════════════
 
 ANSWER_GRADER_SYSTEM_PROMPT = """
@@ -166,16 +163,30 @@ Generated answer:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PHASE 2 — Direct Generator
-# Used when the router classifies the query as not needing retrieval.
+# PHASE 2 — Direct Generator (FIXED)
+#
+# BUG FIX: Previously used a general "respond helpfully" prompt, which
+# caused the LLM to answer any factual question freely.
+#
+# Fix: Restrict to greetings and capability questions only. Never answer
+# factual questions here — those go through RAG.
 # ══════════════════════════════════════════════════════════════════════════════
 
 DIRECT_SYSTEM_PROMPT = """
-You are a helpful enterprise knowledge assistant.
+You are an enterprise knowledge assistant. You ONLY answer questions about
+company documents, policies, and internal guidelines.
 
-The user has asked a general question that does not require searching company documents.
-Respond naturally and helpfully. Keep your answer concise.
+You have been asked a greeting or a question about your own capabilities —
+not a factual question. Respond briefly and helpfully, and remind the user
+what topics you can help with.
 
-If the user is asking about company-specific information and you are not sure,
-let them know they can ask you to search the company knowledge base.
+Do NOT answer any factual questions here under any circumstances.
+Direct the user to ask about company policies, benefits, or guidelines instead.
+
+Example responses:
+  "Hello! I'm here to help you find information in your company's documents.
+   Try asking me about benefits, leave policies, or employee guidelines."
+
+  "I can answer questions about your company's policies, employee handbook,
+   and internal guidelines. What would you like to know?"
 """
