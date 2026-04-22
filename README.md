@@ -108,10 +108,10 @@ Enterprise-Knowledge-Assistant/
 │   └── reranker.py
 │
 ├── generation/
-│   ├── prompts.py          ← Updated: adds Router, Grader, Rewriter prompts
+│   ├── prompts.py          ← Updated: Router, Grader, Rewriter prompts
 │   └── llm.py
 │
-├── graph/                  ← New: LangGraph agentic pipeline
+├── graph/                  ← LangGraph agentic pipeline
 │   ├── __init__.py
 │   ├── state.py            ← AgentState TypedDict
 │   ├── nodes.py            ← All node functions (Phase 1 + Phase 2)
@@ -120,13 +120,15 @@ Enterprise-Knowledge-Assistant/
 │   └── workflow.py         ← Compiled LangGraph app + run_query()
 │
 ├── evaluation/
-│   └── metrics.py
+│   ├── eval_data.py        ← 15 ground-truth QA pairs across 5 categories
+│   ├── metrics.py          ← Retrieval + generation + agentic metrics
+│   └── run_evaluation.py   ← Supports --pipeline linear | graph | both
 │
 ├── api/
 │   └── main.py             ← Updated: serves LangGraph pipeline
 │
 ├── frontend/
-│   └── app.py              ← Updated: shows agent trace + sources panel
+│   └── app.py              ← Updated: Agent Trace panel + sources
 │
 ├── artifacts/
 │   ├── faiss.index
@@ -135,8 +137,9 @@ Enterprise-Knowledge-Assistant/
 ├── data/
 │   └── *.md
 │
-├── ENA_with_langchain/     ← LangChain baseline (unchanged)
-├── main.py                 ← Version 1 entry point (unchanged)
+├── ENA_with_langchain.py     ← LangChain baseline
+├── ENA_with_langchain_Agentic.py ← Agentic baseline (LangGraph)
+├── main.py                 ← Version 1 entry point 
 ├── main_graph.py           ← Version 2 entry point (LangGraph)
 ├── Dockerfile
 ├── requirements.txt
@@ -183,13 +186,72 @@ Documents were split using Markdown section headings. This preserved the natural
 A linear pipeline has no way to recover from poor retrieval or hallucinated answers. LangGraph allows the system to loop, branch, and self-correct — handling ambiguous queries, terminology mismatches, and low-quality retrievals gracefully.
 
 **Why separate `llm_calls.py` from `llm.py`?**
-The main `Generator` class uses `temperature=0.2` and `max_tokens=512`, tuned for long answer generation. Graders and the router need `temperature=0` and `max_tokens=64` for fast, deterministic classification. Separating them avoids modifying the original class.
+The main `Generator` class uses `temperature=0.2` and `max_tokens=512`, tuned for long answer generation. Graders and the router need `temperature=0` and `max_tokens=64` for fast, deterministic classification. Separating them avoids modifying the original class and keeps responsibilities clean.
 
 **Retrieval grader strategy**
-Only the top 3 chunks are graded (not all 10). At least 1 relevant chunk is sufficient to proceed — the cross-encoder reranker is strong enough to surface the best material from a partially relevant set.
+Only the top 3 chunks are graded (not all 10). At least 1 relevant chunk is sufficient to proceed — the cross-encoder reranker is strong enough to surface the best material from a partially relevant set. This keeps grading fast and avoids over-penalising partially relevant retrievals.
 
 **Circuit breakers**
-Both the retrieval loop (rewrite → retrieve) and the answer loop (retry → retrieve) check `retry_count >= max_retries` before acting on grades. This guarantees the graph always terminates and the user always receives a response.
+Both the retrieval loop (rewrite → retrieve) and the answer loop (retry → retrieve) check `retry_count >= max_retries` before acting on grades. This guarantees the graph always terminates and the user always receives a response — even on completely out-of-scope queries.
+
+**top_k vs top_n separation**
+FAISS and the cross-encoder rank differently. FAISS finds geometrically similar vectors; the cross-encoder reads query+chunk together and reasons about meaning. A wider `top_k` (e.g. 20) gives the cross-encoder more candidates to find semantically relevant but lexically distant sections — this was the fix for the moonlighting retrieval failure discovered during testing.
+
+---
+
+## 📊 Evaluation
+
+### Evaluation Suite
+
+The evaluation covers 15 ground-truth questions across 5 categories, measuring 6 metrics:
+
+| Category | Questions | What it tests |
+|---|---|---|
+| Standard RAG | 5 | Clean vocabulary match, single-section answers |
+| Vocabulary Mismatch | 3 | Query terms differ from document section names |
+| Multi-section | 2 | Answer requires pulling from multiple sections |
+| Out-of-scope | 3 | No answer in docs — system should say "I don't know" |
+| Direct/Chitchat | 2 | Router should bypass retrieval entirely |
+
+**Metrics computed:**
+
+| Metric | What it measures |
+|---|---|
+| Precision@K | Fraction of retrieved sections that are relevant |
+| Recall@K | Fraction of relevant sections successfully retrieved |
+| Keyword Score | Fraction of expected answer keywords present |
+| Answer Grounded | Consistency between retrieval outcome and generated answer |
+| Router Accuracy | Correct classification of query type |
+| Rewrite Accuracy | Whether query rewriter fired on genuinely failed retrievals |
+
+### Results (k=10)
+
+```
+Metric                   Linear V1    LangGraph V2     Delta
+────────────────────── ──────────── ────────────── ─────────
+Precision@10                  0.07           0.07    0.00  →
+Recall@10                     0.59           0.59    0.00  →
+Keyword Score                 0.62           0.60   -0.02  →
+Answer Grounded               0.67           0.67    0.00  →
+Router Accuracy               0.87           1.00   +0.13  ↑
+Rewrite Accuracy              0.00           1.00   +1.00  ↑
+```
+
+### Interpreting the Results
+
+**Retrieval metrics are identical across both pipelines — and that is expected.** Both versions use the same FAISS index and cross-encoder reranker. The LangGraph extension adds intelligence *around* retrieval, not a different retrieval mechanism. Identical retrieval scores confirm the refactoring introduced no regression.
+
+**Router Accuracy +13%** reflects that LangGraph correctly classifies 100% of query types (retrieve vs direct), while the linear pipeline has no routing at all and scores based purely on always defaulting to retrieval — failing on the 2 direct/chitchat queries.
+
+**Rewrite Accuracy +100%** is the most meaningful improvement. Linear V1 scores 0.00 because it has no query rewriting capability — not because it failed, but because the feature doesn't exist. LangGraph scored 1.00, meaning every rewrite attempt was triggered on a query where the initial retrieval genuinely failed. The circuit breaker correctly fired on all 3 out-of-scope queries after exhausting retries.
+
+### Known Failure Cases
+
+**Q3 — Career growth:** Reranker returns 4 `"Introduction"` sections with low scores. `"Mastery & Titles"` and `"Pay & Promotions"` exist in the index but don't surface within top-10 FAISS results. Fixable with `top_k=20`.
+
+**Q6 — "Are employees allowed to moonlight?":** The word *moonlight* doesn't map semantically to the `"Not OK"` section in embedding space. Contrast with Q7 (*"Can we work in another company?"*) which retrieves `"Not OK"` at score 6.20. Classic vocabulary mismatch where the retrieval grader passes through because 1/3 sampled chunks appears loosely relevant.
+
+**Q8 — "Does 37signals allow outside employment?":** The phrase *outside employment* has no semantic overlap with any section in the 37signals handbook. Would require a better embedding model or synonym expansion to fix.
 
 ---
 
@@ -205,7 +267,7 @@ Both the retrieval loop (rewrite → retrieve) and the answer loop (retry → re
 | Agentic Orchestration | LangGraph |
 | API Framework | FastAPI |
 | UI | Streamlit |
-| Evaluation | Precision@K, Recall@K |
+| Evaluation | Precision@K, Recall@K, Keyword Score, Groundedness, Router Accuracy |
 
 ---
 
@@ -250,6 +312,21 @@ streamlit run frontend/app.py
 
 ---
 
+### Running Evaluation
+
+```bash
+# Evaluate LangGraph pipeline only (default)
+python evaluation/run_evaluation.py
+
+# Evaluate original linear pipeline only
+python evaluation/run_evaluation.py --pipeline linear
+
+# Side-by-side comparison of both pipelines
+python evaluation/run_evaluation.py --pipeline both --k 10
+```
+
+---
+
 ### API Usage
 
 **POST** `/query`
@@ -284,3 +361,15 @@ streamlit run frontend/app.py
   ]
 }
 ```
+
+---
+
+## 🔮 Future Work
+
+- **Hybrid Search** — Combine BM25 sparse retrieval with dense FAISS retrieval using Reciprocal Rank Fusion to address vocabulary mismatch failures
+- **HyDE** — Hypothetical Document Embeddings for improved recall on vague or indirect queries
+- **RAGAS Evaluation** — Add semantic answer faithfulness and context precision metrics beyond section-matching
+- **Qdrant Migration** — Replace FAISS with Qdrant for metadata filtering and production-ready vector search
+- **Multi-turn Conversation** — Add conversation memory for follow-up question handling
+- **LangSmith Tracing** — Instrument graph execution for full per-query observability
+- **Stronger Embedding Model** — Upgrade from `all-MiniLM-L6-v2` to `all-mpnet-base-v2` to improve semantic coverage on vocabulary mismatch cases
